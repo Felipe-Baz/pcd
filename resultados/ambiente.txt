@@ -1,0 +1,6 @@
+SO: Windows-11-10.0.26200-SP0
+Python: 3.13.14
+Compilador: gcc (Rev8, Built by MSYS2 project) 15.2.0
+Flags: -O3 -Wall -fopenmp
+Processador: AMD64 Family 25 Model 33 Stepping 0, AuthenticAMD
+CPU: AMD Ryzen 5 5600X, 6 nucleos / 12 threads, 4.2 GHz (base), 32 GB RAM

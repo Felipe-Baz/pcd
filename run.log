@@ -1,0 +1,77 @@
+[A-threads] rodada 1/2 (1/10) omp t=12
+[A-threads] rodada 1/2 (2/10) omp t=3
+[A-threads] rodada 1/2 (3/10) omp t=2
+[A-threads] rodada 1/2 (4/10) omp t=16
+[A-threads] rodada 1/2 (5/10) omp t=6
+[A-threads] rodada 1/2 (6/10) omp t=8
+[A-threads] rodada 1/2 (7/10) omp t=24
+[A-threads] rodada 1/2 (8/10) omp t=4
+[A-threads] rodada 1/2 (9/10) seq
+[A-threads] rodada 1/2 (10/10) omp t=1
+[A-threads] rodada 2/2 (1/10) omp t=3
+[A-threads] rodada 2/2 (2/10) omp t=6
+[A-threads] rodada 2/2 (3/10) omp t=2
+[A-threads] rodada 2/2 (4/10) omp t=4
+[A-threads] rodada 2/2 (5/10) omp t=1
+[A-threads] rodada 2/2 (6/10) omp t=16
+[A-threads] rodada 2/2 (7/10) omp t=12
+[A-threads] rodada 2/2 (8/10) seq
+[A-threads] rodada 2/2 (9/10) omp t=8
+[A-threads] rodada 2/2 (10/10) omp t=24
+[B-sched] rodada 1/2 (1/16) t=6 dynamic,64
+[B-sched] rodada 1/2 (2/16) t=6 static,16
+[B-sched] rodada 1/2 (3/16) t=12 dynamic,16
+[B-sched] rodada 1/2 (4/16) t=12 static,1
+[B-sched] rodada 1/2 (5/16) t=6 static,1
+[B-sched] rodada 1/2 (6/16) t=6 static,0
+[B-sched] rodada 1/2 (7/16) t=12 dynamic,64
+[B-sched] rodada 1/2 (8/16) t=6 dynamic,16
+[B-sched] rodada 1/2 (9/16) t=6 guided,16
+[B-sched] rodada 1/2 (10/16) t=6 dynamic,1
+[B-sched] rodada 1/2 (11/16) t=12 guided,16
+[B-sched] rodada 1/2 (12/16) t=12 static,0
+[B-sched] rodada 1/2 (13/16) t=12 guided,0
+[B-sched] rodada 1/2 (14/16) t=12 static,16
+[B-sched] rodada 1/2 (15/16) t=12 dynamic,1
+[B-sched] rodada 1/2 (16/16) t=6 guided,0
+[B-sched] rodada 2/2 (1/16) t=12 guided,0
+[B-sched] rodada 2/2 (2/16) t=12 static,0
+[B-sched] rodada 2/2 (3/16) t=6 static,0
+[B-sched] rodada 2/2 (4/16) t=6 guided,16
+[B-sched] rodada 2/2 (5/16) t=12 guided,16
+[B-sched] rodada 2/2 (6/16) t=6 static,16
+[B-sched] rodada 2/2 (7/16) t=12 static,1
+[B-sched] rodada 2/2 (8/16) t=12 dynamic,64
+[B-sched] rodada 2/2 (9/16) t=12 static,16
+[B-sched] rodada 2/2 (10/16) t=6 guided,0
+[B-sched] rodada 2/2 (11/16) t=12 dynamic,1
+[B-sched] rodada 2/2 (12/16) t=6 static,1
+[B-sched] rodada 2/2 (13/16) t=6 dynamic,64
+[B-sched] rodada 2/2 (14/16) t=12 dynamic,16
+[B-sched] rodada 2/2 (15/16) t=6 dynamic,1
+[B-sched] rodada 2/2 (16/16) t=6 dynamic,16
+[C-tamanhos] rodada 1/2 (1/12) omp n=1024 t=12
+[C-tamanhos] rodada 1/2 (2/12) seq n=128
+[C-tamanhos] rodada 1/2 (3/12) seq n=256
+[C-tamanhos] rodada 1/2 (4/12) omp n=128 t=12
+[C-tamanhos] rodada 1/2 (5/12) omp n=512 t=1
+[C-tamanhos] rodada 1/2 (6/12) omp n=256 t=12
+[C-tamanhos] rodada 1/2 (7/12) seq n=1024
+[C-tamanhos] rodada 1/2 (8/12) omp n=256 t=1
+[C-tamanhos] rodada 1/2 (9/12) omp n=1024 t=1
+[C-tamanhos] rodada 1/2 (10/12) seq n=512
+[C-tamanhos] rodada 1/2 (11/12) omp n=128 t=1
+[C-tamanhos] rodada 1/2 (12/12) omp n=512 t=12
+[C-tamanhos] rodada 2/2 (1/12) omp n=512 t=1
+[C-tamanhos] rodada 2/2 (2/12) omp n=128 t=12
+[C-tamanhos] rodada 2/2 (3/12) omp n=256 t=12
+[C-tamanhos] rodada 2/2 (4/12) omp n=512 t=12
+[C-tamanhos] rodada 2/2 (5/12) seq n=512
+[C-tamanhos] rodada 2/2 (6/12) omp n=1024 t=1
+[C-tamanhos] rodada 2/2 (7/12) seq n=1024
+[C-tamanhos] rodada 2/2 (8/12) omp n=256 t=1
+[C-tamanhos] rodada 2/2 (9/12) seq n=256
+[C-tamanhos] rodada 2/2 (10/12) seq n=128
+[C-tamanhos] rodada 2/2 (11/12) omp n=128 t=1
+[C-tamanhos] rodada 2/2 (12/12) omp n=1024 t=12
+Concluido.
