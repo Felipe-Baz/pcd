@@ -35,8 +35,8 @@ def rodar_testes():
 
 
 def carregar_resultados():
-    colunas = ["Ordem", "Tamanho", "Tempo_s", "MFLOPS"]
-    return pd.read_csv(CSV_RESULTADOS, names=colunas)
+    df = pd.read_csv(CSV_RESULTADOS)
+    return df.rename(columns={"versao": "Ordem", "n": "Tamanho", "tempo_s": "Tempo_s", "mflops": "MFLOPS"})
 
 
 def plotar(tabela):

@@ -92,6 +92,8 @@ int main (int argc, char *argv[]) {
 
   FILE *f = fopen(saida, "a");
   if (!f) { fprintf(stderr, "Erro ao abrir %s\n", saida); return 1; }
+  fseek(f, 0, SEEK_END);
+  if (ftell(f) == 0) fprintf(f, "versao,n,threads,sched,chunk,rep,tempo_s,cpu_s,mflops,util\n");
   double flops = 2.0 * n * (double) n * n;
 
   gemm_ijk(n, A, B, C1);  /* aquecimento */

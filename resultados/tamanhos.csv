@@ -1,3 +1,4 @@
+versao,n,threads,sched,chunk,rep,tempo_s,cpu_s,mflops,util
 ijk,1024,12,static,0,0,0.447419,4.125000,4799.72,0.7683
 ijk,1024,12,static,0,1,0.433270,4.234375,4956.45,0.8144
 ijk,1024,12,static,0,2,0.423174,4.468750,5074.71,0.8800

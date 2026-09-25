@@ -32,7 +32,7 @@ plt.rcParams.update({"figure.dpi": 130, "axes.grid": True, "grid.alpha": 0.3,
 
 
 def ler(nome):
-    return pd.read_csv(RES / nome, names=COLS)
+    return pd.read_csv(RES / nome)
 
 
 def agrega(df, chaves):

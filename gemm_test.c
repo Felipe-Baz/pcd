@@ -104,6 +104,8 @@ int main (int argc, char *argv[]) {
   if (ficheiro == NULL) {
       printf("Erro ao criar o arquivo CSV!\n");
   } else {
+      fseek(ficheiro, 0, SEEK_END);
+      if (ftell(ficheiro) == 0) fprintf(ficheiro, "versao,n,tempo_s,mflops\n");
       fprintf(ficheiro, "ijk,%d,%f,%.2f\n", n, tempo_ijk, mflops_ijk);
       fprintf(ficheiro, "ikj,%d,%f,%.2f\n", n, tempo_ikj, mflops_ikj);
       fclose(ficheiro);
