@@ -215,7 +215,41 @@ def analise_tamanhos():
     return par
 
 
-def relatorio(par, seq, ag_sched, tam):
+# ------------------------------------------------------------------ D) energia
+def analise_energia():
+    """energia.csv: grupo,rotulo,rodada,duracao_s,cpu_pct_medio,util_sistema,
+    potencia_w_est,energia_j_est. potencia/energia sao ESTIMATIVAS por modelo
+    de TDP (ver run_experimentos.py), nao leituras de sensor de hardware."""
+    caminho = RES / "energia.csv"
+    if not caminho.exists():
+        print("resultados/energia.csv nao encontrado (rode run_experimentos.py atualizado).")
+        return None
+    df = pd.read_csv(caminho)
+    ag = df.groupby(["grupo", "rotulo"]).agg(
+        duracao_med=("duracao_s", "mean"), cpu_pct_med=("cpu_pct_medio", "mean"),
+        util_sistema_med=("util_sistema", "mean"), potencia_w_med=("potencia_w_est", "mean"),
+        energia_j_med=("energia_j_est", "mean"), energia_j_total=("energia_j_est", "sum"),
+    ).reset_index()
+    ag.to_csv(RES / "resumo_energia.csv", index=False)
+
+    # apenas o grupo A (varredura de threads) para o grafico, ordenado por threads
+    a = ag[ag.grupo == "A-threads"].copy()
+    a["threads"] = a.rotulo.str.extract(r"t=(\d+)").fillna("0").astype(int)
+    a.loc[a.rotulo == "seq", "threads"] = 1
+    a = a.sort_values("threads")
+
+    fig, axs = plt.subplots(1, 2, figsize=(11, 4.2))
+    axs[0].plot(a.threads, a.energia_j_med, "o-", color="#e76f51")
+    axs[0].set(xlabel="Threads", ylabel="Energia estimada (J)", title="Energia por execução (estimativa por TDP)")
+    axs[1].plot(a.threads, 100 * a.util_sistema_med, "o-", color="#264653")
+    axs[1].set(xlabel="Threads", ylabel="Utilização do sistema (%)", title="Utilização de CPU (psutil, medida externa)")
+    for ax in axs:
+        ax.set_xticks(sorted(a.threads.unique()))
+    salvar(fig, "10_energia_cpu.png")
+    return ag
+
+
+def relatorio(par, seq, ag_sched, tam, energia=None):
     L = ["# Resumo dos resultados (gerado por analisar.py)\n"]
     L.append("## Sequencial (N=1024)\n")
     L.append(seq.reset_index()[["versao", "tempo_med", "tempo_dp", "cv_pct", "mflops"]].round(4).to_markdown(index=False))
@@ -227,6 +261,10 @@ def relatorio(par, seq, ag_sched, tam):
     L.append(ag_sched[["versao", "threads", "config", "tempo_med", "tempo_dp", "mflops"]].round(4).to_markdown(index=False))
     L.append("\n## Tamanhos\n")
     L.append(tam[["versao", "n", "threads", "tempo_med", "speedup", "eficiencia"]].round(3).to_markdown(index=False))
+    if energia is not None:
+        L.append("\n## Energia (estimativa por modelo de TDP) e utilização de CPU\n")
+        L.append(energia[["grupo", "rotulo", "duracao_med", "cpu_pct_med", "util_sistema_med",
+                           "potencia_w_med", "energia_j_med"]].round(3).to_markdown(index=False))
     (RES / "resumo.md").write_text("\n".join(L), encoding="utf-8")
 
 
@@ -234,8 +272,9 @@ if __name__ == "__main__":
     par, seq = analise_threads()
     ag = analise_sched()
     tam = analise_tamanhos()
+    energia = analise_energia()
     try:
-        relatorio(par, seq, ag, tam)
+        relatorio(par, seq, ag, tam, energia)
     except ImportError:
         print("instale 'tabulate' para gerar resumo.md")
     print("Graficos em", GRAF)
