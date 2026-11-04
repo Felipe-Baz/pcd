@@ -1,151 +1,233 @@
 # -*- coding: utf-8 -*-
-"""Protocolo experimental (T1 - PCD, secao 9).
+"""Protocolo experimental (T1 - PCD, secao 9) - versao Linux com energia medida.
 
 Compila as versoes sequencial e OpenMP instrumentadas e executa:
   A) varredura de threads   (N fixo, escalonamento static)
   B) comparacao de escalonamentos (static/dynamic/guided, varios chunks)
   C) varredura do tamanho da matriz (seq, 1 thread e todos os threads)
 
-Cada configuracao gera 10 medicoes (2 rodadas x 5 repeticoes, apos 1 execucao
-de aquecimento por processo). A ordem das configuracoes e embaralhada a cada
-rodada para diluir efeitos de temperatura/turbo.
+Cada configuracao gera RODADAS x REPS medicoes (apos 1 execucao de aquecimento
+por processo). A ordem das configuracoes e embaralhada a cada rodada para diluir
+efeitos de temperatura/turbo.
 
-Cada chamada de processo tambem e monitorada com psutil (utilizacao de CPU do
-processo, amostrada em intervalos curtos) e a energia e ESTIMADA por um modelo
-simples de TDP: potencia(t) = TDP_W * (uso_processo(t) / 100 / nucleos_logicos);
-energia = integral da potencia no tempo. Isso NAO e uma leitura real de sensor
-de hardware (Windows/AMD nao expoe um contador de joules por processo sem
-drivers extras) - e apenas uma estimativa proporcional ao uso de CPU, util para
-comparar configuracoes entre si, nao para obter watts/joules absolutos exatos.
+ENERGIA: medida DIRETAMENTE no codigo C, com o contador RAPL do pacote
+(/sys/class/powercap/intel-rapl:0/energy_uj), lido imediatamente antes e depois
+do MESMO trecho cronometrado (so a multiplicacao). Nao ha estimativa por TDP.
+Antes de cada grupo o script mede a potencia do sistema ocioso (OCIOSO_S segundos),
+usada na analise para descontar a energia basal.
 
-Uso: python run_experimentos.py
-Saida: resultados/*.csv, resultados/ambiente.txt, resultados/energia.csv
+Permissao: desde o kernel 5.10 o energy_uj so e legivel por root. Libere a leitura:
+    sudo chmod a+r /sys/class/powercap/intel-rapl:0/energy_uj
+(vale ate reiniciar). Para usar outro dominio/caminho: RAPL_PATH=/caminho python3 ...
+Sem RAPL, rode com --sem-energia (so desempenho/localidade; energia = nan).
+
+Uso:
+    python3 run_experimentos.py                  # protocolo completo
+    python3 run_experimentos.py --teste-rapido   # roda em ~1 min para validar o ambiente
+    python3 run_experimentos.py --sem-energia
+Saida: resultados/*.csv, resultados/ambiente.txt, resultados/ambiente.json, resultados/ocioso.csv
 """
 
-import csv
+import argparse
+import json
+import os
+import platform
 import random
 import subprocess
 import sys
 import time
-import platform
 from pathlib import Path
-
-import psutil
 
 BASE = Path(__file__).resolve().parent
 RES = BASE / "resultados"
-EXE = ".exe" if sys.platform == "win32" else ""
-SEQ = BASE / f"gemm_seq_bench{EXE}"
-OMP = BASE / f"gemm_omp_bench{EXE}"
+SEQ = BASE / "gemm_seq_bench"
+OMP = BASE / "gemm_omp_bench"
 FLAGS = ["-O3", "-Wall"]
+RAPL = Path(os.environ.get("RAPL_PATH", "/sys/class/powercap/intel-rapl:0"))
 
-TDP_W = 65.0          # TDP nominal do AMD Ryzen 5 5600X (estimativa de potencia)
-NUCLEOS_LOGICOS = 12
-AMOSTRA_S = 0.1        # intervalo de amostragem do psutil
-
-RODADAS = 2
-REPS = 5            # 2 x 5 = 10 medicoes por configuracao
-N_THREADS = 1024    # tamanho da varredura de threads
-THREADS = [1, 2, 3, 4, 6, 8, 12]
-NT_FIXO = 12        # nucleos logicos da maquina de teste
+RODADAS = 3
+REPS = 5              # RODADAS x REPS medicoes por configuracao
+N_THREADS = 1024      # tamanho da varredura de threads
 TAM_TAMANHOS = [128, 256, 512, 1024]
 SCHEDS = [("static", 0), ("static", 1), ("static", 16), ("dynamic", 1),
           ("dynamic", 16), ("dynamic", 64), ("guided", 0), ("guided", 16)]
-NT_SCHED = [6, 12]
+OCIOSO_S = 10         # duracao da medicao de potencia ociosa antes de cada grupo
+PAUSA_S = 2           # pausa entre execucoes (deixa a temperatura assentar)
 
 
+# ------------------------------------------------------------------ hardware
+def sh(cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+
+
+def topologia():
+    """(nucleos_fisicos, nucleos_logicos) detectados na maquina."""
+    logicos = os.cpu_count() or 1
+    pares = set()
+    for linha in sh(["lscpu", "-p=CORE,SOCKET"]).splitlines():
+        if linha and not linha.startswith("#"):
+            pares.add(tuple(linha.split(",")[:2]))
+    return (len(pares) or logicos), logicos
+
+
+FISICOS, LOGICOS = topologia()
+THREADS = sorted({t for t in (1, 2, 3, 4, 6, 8, 12, 16, FISICOS, LOGICOS) if t <= LOGICOS})
+NT_FIXO = LOGICOS
+NT_SCHED = sorted({FISICOS, LOGICOS})
+
+
+# --------------------------------------------------------------------- RAPL
+def rapl_ler_uj():
+    try:
+        return int((RAPL / "energy_uj").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def rapl_max_uj():
+    try:
+        return int((RAPL / "max_energy_range_uj").read_text())
+    except (OSError, ValueError):
+        return 0
+
+
+def medir_ocioso(segundos):
+    """Potencia media (W) do pacote com o sistema em repouso."""
+    e0 = rapl_ler_uj()
+    t0 = time.perf_counter()
+    time.sleep(segundos)
+    e1 = rapl_ler_uj()
+    dt = time.perf_counter() - t0
+    if e0 is None or e1 is None:
+        return float("nan")
+    d = e1 - e0 if e1 >= e0 else e1 + rapl_max_uj() - e0
+    return d / 1e6 / dt
+
+
+def verificar_rapl():
+    if rapl_ler_uj() is not None:
+        return
+    print(f"ERRO: nao foi possivel ler {RAPL / 'energy_uj'}.\n"
+          "  1) Veja se existe: ls /sys/class/powercap/\n"
+          "  2) Libere a leitura: sudo chmod a+r /sys/class/powercap/intel-rapl:0/energy_uj\n"
+          "  3) Se o caminho for outro: RAPL_PATH=/sys/class/powercap/<dominio> python3 run_experimentos.py\n"
+          "  4) Sem RAPL no equipamento: python3 run_experimentos.py --sem-energia")
+    sys.exit(1)
+
+
+# ----------------------------------------------------------------- ambiente
+def ler_texto(caminho):
+    try:
+        return Path(caminho).read_text().strip()
+    except OSError:
+        return "n/d"
+
+
+def registrar_ambiente(com_energia):
+    modelo = next((l.split(":", 1)[1].strip() for l in sh(["lscpu"]).splitlines()
+                   if l.startswith("Model name")), platform.processor())
+    mem_kb = next((int(l.split()[1]) for l in ler_texto("/proc/meminfo").splitlines()
+                   if l.startswith("MemTotal")), 0)
+    gcc = (sh(["gcc", "--version"]).splitlines() or ["n/d"])[0]
+    ac = [ler_texto(p) for p in sorted(Path("/sys/class/power_supply").glob("A*/online"))]
+    linhas = [
+        f"SO: {platform.platform()}",
+        f"Python: {platform.python_version()}",
+        f"Compilador: {gcc}",
+        f"Flags: {' '.join(FLAGS)} -fopenmp",
+        f"CPU: {modelo}",
+        f"Nucleos fisicos / logicos: {FISICOS} / {LOGICOS}",
+        f"Memoria: {mem_kb / 1048576:.1f} GiB",
+        f"Governor de frequencia: {ler_texto('/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor')}",
+        f"Fonte AC conectada (1=sim): {','.join(ac) or 'n/d'}",
+        f"Energia: {'RAPL pacote em ' + str(RAPL) if com_energia else 'nao medida'}",
+        f"Protocolo: {RODADAS} rodadas x {REPS} reps; ocioso {OCIOSO_S}s por grupo; pausa {PAUSA_S}s",
+    ]
+    (RES / "ambiente.txt").write_text("\n".join(linhas) + "\n", encoding="utf-8")
+    (RES / "ambiente.json").write_text(json.dumps(
+        {"nucleos_fisicos": FISICOS, "nucleos_logicos": LOGICOS, "energia_rapl": com_energia,
+         "cpu": modelo}, ensure_ascii=False), encoding="utf-8")
+
+
+# ---------------------------------------------------------------- execucao
 def compilar():
     subprocess.run(["gcc", *FLAGS, str(BASE / "gemm_seq_bench.c"), "-o", str(SEQ), "-lm"], check=True)
     subprocess.run(["gcc", *FLAGS, "-fopenmp", str(BASE / "gemm_omp_bench.c"), "-o", str(OMP), "-lm"], check=True)
 
 
-def registrar_ambiente():
-    gcc = subprocess.run(["gcc", "--version"], capture_output=True, text=True).stdout.splitlines()[0]
-    linhas = [f"SO: {platform.platform()}", f"Python: {platform.python_version()}",
-              f"Compilador: {gcc}", f"Flags: {' '.join(FLAGS)} -fopenmp",
-              f"Processador: {platform.processor()}",
-              "CPU: AMD Ryzen 5 5600X, 6 nucleos / 12 threads, 4.2 GHz (base), 32 GB RAM"]
-    (RES / "ambiente.txt").write_text("\n".join(linhas) + "\n", encoding="utf-8")
-
-
-def medir_com_energia(cmd):
-    """Executa cmd e monitora com psutil: utilizacao de CPU do processo (amostrada
-    a cada AMOSTRA_S) e energia estimada pelo modelo de TDP (ver docstring do
-    modulo). Retorna (duracao_s, cpu_pct_medio, util_sistema, potencia_w, energia_j).
-    """
-    proc = psutil.Popen(cmd, stdout=subprocess.DEVNULL)
-    proc.cpu_percent(interval=None)  # descarta a primeira leitura (sempre 0.0)
-    amostras = []
-    t0 = time.perf_counter()
-    while proc.poll() is None:
-        try:
-            amostras.append(proc.cpu_percent(interval=AMOSTRA_S))
-        except psutil.NoSuchProcess:
-            break
-    duracao = time.perf_counter() - t0
-    rc = proc.wait()
-    if rc != 0:
-        raise subprocess.CalledProcessError(rc, cmd)
-
-    cpu_pct_medio = sum(amostras) / len(amostras) if amostras else 0.0
-    util_sistema = cpu_pct_medio / (100.0 * NUCLEOS_LOGICOS)
-    potencia_w = TDP_W * util_sistema
-    energia_j = potencia_w * duracao
-    return duracao, cpu_pct_medio, util_sistema, potencia_w, energia_j
-
-
-def executar(grupo, configs):
-    """configs: lista de (rotulo, comando, csv). Embaralha a cada rodada."""
-    energia_csv = RES / "energia.csv"
-    novo = not energia_csv.exists()
-    with open(energia_csv, "a", encoding="utf-8", newline="") as fe:
-        w = csv.writer(fe)
-        if novo:
-            w.writerow(["grupo", "rotulo", "rodada", "duracao_s", "cpu_pct_medio", "util_sistema",
-                        "potencia_w_est", "energia_j_est"])
-        for rodada in range(RODADAS):
-            ordem = configs[:]
-            random.shuffle(ordem)
-            for i, (rotulo, cmd) in enumerate(ordem, 1):
-                print(f"[{grupo}] rodada {rodada + 1}/{RODADAS} ({i}/{len(ordem)}) {rotulo}", flush=True)
-                dur, cpu_pct, util, pot, energia = medir_com_energia(cmd)
-                w.writerow([grupo, rotulo, rodada + 1, f"{dur:.6f}", f"{cpu_pct:.2f}", f"{util:.4f}",
-                            f"{pot:.3f}", f"{energia:.3f}"])
-                fe.flush()
+def executar(grupo, configs, env, com_energia):
+    """configs: lista de (rotulo, comando). Embaralha a cada rodada."""
+    if com_energia:
+        p = medir_ocioso(OCIOSO_S)
+        print(f"[{grupo}] potencia ociosa: {p:.2f} W", flush=True)
+        novo = not (RES / "ocioso.csv").exists()
+        with open(RES / "ocioso.csv", "a", encoding="utf-8") as f:
+            if novo:
+                f.write("grupo,p_ocioso_w\n")
+            f.write(f"{grupo},{p:.4f}\n")
+    for rodada in range(RODADAS):
+        ordem = configs[:]
+        random.shuffle(ordem)
+        for i, (rotulo, cmd) in enumerate(ordem, 1):
+            print(f"[{grupo}] rodada {rodada + 1}/{RODADAS} ({i}/{len(ordem)}) {rotulo}", flush=True)
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, env=env)
+            time.sleep(PAUSA_S)
 
 
 def main():
+    global RODADAS, REPS, N_THREADS, TAM_TAMANHOS, SCHEDS, OCIOSO_S, PAUSA_S, THREADS, NT_SCHED
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--sem-energia", action="store_true", help="nao le o RAPL (energia = nan)")
+    ap.add_argument("--teste-rapido", action="store_true", help="protocolo reduzido para validar o ambiente")
+    args = ap.parse_args()
+    com_energia = not args.sem_energia
+    if args.teste_rapido:
+        RODADAS, REPS, N_THREADS, TAM_TAMANHOS = 1, 2, 256, [128, 256]
+        SCHEDS = [("static", 0), ("dynamic", 16)]
+        THREADS = sorted({1, FISICOS, LOGICOS})
+        NT_SCHED = [LOGICOS]
+        OCIOSO_S, PAUSA_S = 3, 0
+    if com_energia:
+        verificar_rapl()
+
+    env = os.environ.copy()
+    if not com_energia:
+        env["RAPL_PATH"] = ""          # o C grava nan, sem avisos
+
     RES.mkdir(exist_ok=True)
     for f in RES.glob("*.csv"):
         f.unlink()
     compilar()
-    registrar_ambiente()
+    registrar_ambiente(com_energia)
     random.seed(42)
 
     # A) threads
-    csv = str(RES / "threads.csv")
-    cfg = [("seq", [str(SEQ), str(N_THREADS), str(REPS), csv])]
+    arq = str(RES / "threads.csv")
+    cfg = [("seq", [str(SEQ), str(N_THREADS), str(REPS), arq])]
     for t in THREADS:
-        cfg.append((f"omp t={t}", [str(OMP), str(N_THREADS), str(t), str(REPS), "static", "0", csv]))
-    executar("A-threads", cfg)
+        cfg.append((f"omp t={t}", [str(OMP), str(N_THREADS), str(t), str(REPS), "static", "0", arq]))
+    executar("A-threads", cfg, env, com_energia)
 
     # B) escalonamento
-    csv = str(RES / "escalonamento.csv")
+    arq = str(RES / "escalonamento.csv")
     cfg = []
     for t in NT_SCHED:
         for s, c in SCHEDS:
-            cfg.append((f"t={t} {s},{c}", [str(OMP), str(N_THREADS), str(t), str(REPS), s, str(c), csv]))
-    executar("B-sched", cfg)
+            cfg.append((f"t={t} {s},{c}", [str(OMP), str(N_THREADS), str(t), str(REPS), s, str(c), arq]))
+    executar("B-sched", cfg, env, com_energia)
 
     # C) tamanho
-    csv = str(RES / "tamanhos.csv")
+    arq = str(RES / "tamanhos.csv")
     cfg = []
     for n in TAM_TAMANHOS:
         reps = REPS * 4 if n <= 256 else REPS   # entradas pequenas: mais repeticoes
-        cfg.append((f"seq n={n}", [str(SEQ), str(n), str(reps), csv]))
-        for t in (1, NT_FIXO):
-            cfg.append((f"omp n={n} t={t}", [str(OMP), str(n), str(t), str(reps), "static", "0", csv]))
-    executar("C-tamanhos", cfg)
+        cfg.append((f"seq n={n}", [str(SEQ), str(n), str(reps), arq]))
+        for t in sorted({1, NT_FIXO}):
+            cfg.append((f"omp n={n} t={t}", [str(OMP), str(n), str(t), str(reps), "static", "0", arq]))
+    executar("C-tamanhos", cfg, env, com_energia)
     print("Concluido.")
 
 

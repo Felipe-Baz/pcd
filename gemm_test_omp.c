@@ -1,9 +1,9 @@
+#define _POSIX_C_SOURCE 199309L
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include <math.h>
 #include <omp.h>
-#define _POSIX_C_SOURCE 199309L
 
 void info_threads (void) {
   int num_procs = omp_get_num_procs();
@@ -47,9 +47,9 @@ void gemm_ikj (int n, const double *A, const double *B, double *C) {
 int validar_resultados (int n, const double *C1, const double *C2) {
 	int i;
 	double epsilon = 1e-9;
-	for (i = 0; i < n; i++) {
-		if (fabs(C1[i] - C2[i]) > epsilon) {
-			printf("[ERRO] Divergencia no Indice %d: ijk=%f, ikj=%f", i, C1[i], C2[i]);
+	for (i = 0; i < n * n; i++) {
+		if (fabs(C1[i] - C2[i]) > epsilon * (fabs(C1[i]) > 1.0 ? fabs(C1[i]) : 1.0)) {
+			printf("[ERRO] Divergencia no Indice %d: ijk=%f, ikj=%f\n", i, C1[i], C2[i]);
 			return 0;
 		}
 	}
@@ -103,7 +103,7 @@ int main (int argc, char *argv[]) {
   printf("Resultados (N = %d):\n", n);
   printf("ijk: %f s | %.2f MFLOPS\n", tempo_ijk, mflops_ijk);
   printf("ikj: %f s | %.2f MFLOPS\n", tempo_ikj, mflops_ikj);
-  printf("Speedup de ikj sobre ijk: %2.fx\n", tempo_ijk / tempo_ikj);
+  printf("Speedup de ikj sobre ijk: %.2fx\n", tempo_ijk / tempo_ikj);
   free(A);
   free(B);
   free(C_ijk);
