@@ -1,10 +1,14 @@
-/* GEMM OpenMP instrumentado.
+/* GEMM OpenMP instrumentado - Linux.
  * Uso: gemm_omp_bench N THREADS REPS SCHED CHUNK [saida.csv]
  *   SCHED = static | dynamic | guided ; CHUNK = 0 usa o padrao do OpenMP
  * Faz 1 execucao de aquecimento (descartada) e REPS medicoes de cada variante.
- * Metricas por medicao: tempo (parede), tempo de CPU, MFLOPS, utilizacao de CPU
- * (cpu/(parede*threads)) e, ao final, a verificacao completa contra o sequencial.
- * CSV: versao,n,threads,sched,chunk,rep,tempo_s,cpu_s,mflops,util
+ * Metricas por medicao, todas sobre O MESMO trecho (so a multiplicacao):
+ *   tempo (parede), tempo de CPU, MFLOPS, utilizacao de CPU (cpu/(parede*threads))
+ *   e ENERGIA (J) do pacote, lida do contador RAPL (powercap) antes e depois.
+ * Ao final, verificacao completa contra a referencia sequencial.
+ * Energia: le $RAPL_PATH/energy_uj (padrao /sys/class/powercap/intel-rapl:0).
+ *   Se o arquivo nao for legivel (ou RAPL_PATH for vazio), grava nan.
+ * CSV: versao,n,threads,sched,chunk,rep,tempo_s,cpu_s,mflops,util,energia_j
  */
 #define _POSIX_C_SOURCE 199309L
 #include <stdio.h>
@@ -13,28 +17,51 @@
 #include <time.h>
 #include <math.h>
 #include <omp.h>
-#ifdef _WIN32
-#include <windows.h>
-#endif
 
-static double wall_now (void) {  /* omp_get_wtime tem resolucao de ~1 ms no MinGW */
+static double wall_now (void) {
   struct timespec t;
   clock_gettime(CLOCK_MONOTONIC, &t);
   return t.tv_sec + t.tv_nsec / 1e9;
 }
 
+/* tempo de CPU acumulado do processo (todas as threads) */
 static double cpu_now (void) {
-#ifdef _WIN32
-  FILETIME c, e, k, u;
-  GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u);
-  ULONGLONG kk = ((ULONGLONG)k.dwHighDateTime << 32) | k.dwLowDateTime;
-  ULONGLONG uu = ((ULONGLONG)u.dwHighDateTime << 32) | u.dwLowDateTime;
-  return (double)(kk + uu) * 100e-9;
-#else
   struct timespec t;
   clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t);
   return t.tv_sec + t.tv_nsec / 1e9;
-#endif
+}
+
+/* ---- energia: contador RAPL do pacote (microjoules, cumulativo) ---- */
+static char rapl_energy[512];
+static unsigned long long rapl_max = 0;
+static int rapl_ok = 0;
+
+static int rapl_ler (unsigned long long *uj) {
+  FILE *f = fopen(rapl_energy, "r");
+  if (!f) return 0;
+  int ok = fscanf(f, "%llu", uj) == 1;
+  fclose(f);
+  return ok;
+}
+
+static void rapl_init (void) {
+  const char *dir = getenv("RAPL_PATH");
+  if (!dir) dir = "/sys/class/powercap/intel-rapl:0";
+  if (dir[0] == '\0') return;                 /* energia desligada de proposito */
+  snprintf(rapl_energy, sizeof rapl_energy, "%s/energy_uj", dir);
+  char p[600];
+  snprintf(p, sizeof p, "%s/max_energy_range_uj", dir);
+  FILE *f = fopen(p, "r");
+  if (f) { if (fscanf(f, "%llu", &rapl_max) != 1) rapl_max = 0; fclose(f); }
+  unsigned long long e;
+  rapl_ok = rapl_ler(&e);
+  if (!rapl_ok) fprintf(stderr, "[aviso] RAPL ilegivel em %s: energia sera nan\n", rapl_energy);
+}
+
+/* diferenca em joules, tratando a volta do contador */
+static double rapl_delta_j (unsigned long long e0, unsigned long long e1) {
+  unsigned long long d = e1 >= e0 ? e1 - e0 : (rapl_max ? e1 + rapl_max - e0 : 0);
+  return d / 1e6;
 }
 
 /* schedule(runtime): o escalonamento e escolhido por omp_set_schedule */
@@ -56,7 +83,7 @@ void gemm_ijk (int n, const double *A, const double *B, double *C) {
 void gemm_ikj (int n, const double *A, const double *B, double *C) {
   int i, j, k;
   double r;
-  #pragma omp parallel for private(j) schedule(runtime)
+  #pragma omp parallel for schedule(runtime)
   for (i = 0; i < n * n; i++) {
     C[i] = 0.0;
   }
@@ -118,11 +145,12 @@ int main (int argc, char *argv[]) {
     B[i] = (double)((i * 2) % 100) / 10.0;
   }
   gemm_ref(n, A, B, R);
+  rapl_init();
 
   FILE *f = fopen(saida, "a");
   if (!f) { fprintf(stderr, "Erro ao abrir %s\n", saida); return 1; }
   fseek(f, 0, SEEK_END);
-  if (ftell(f) == 0) fprintf(f, "versao,n,threads,sched,chunk,rep,tempo_s,cpu_s,mflops,util\n");
+  if (ftell(f) == 0) fprintf(f, "versao,n,threads,sched,chunk,rep,tempo_s,cpu_s,mflops,util,energia_j\n");
   double flops = 2.0 * n * (double) n * n;
 
   gemm_ijk(n, A, B, C1);  /* aquecimento */
@@ -130,12 +158,17 @@ int main (int argc, char *argv[]) {
 
   for (int v = 0; v < 2; v++) {
     for (int r = 0; r < reps; r++) {
+      unsigned long long e0 = 0, e1 = 0;
+      int lido = rapl_ok && rapl_ler(&e0);
       double w0 = wall_now(), c0 = cpu_now();
       if (v == 0) gemm_ijk(n, A, B, C1); else gemm_ikj(n, A, B, C2);
       double w = wall_now() - w0, c = cpu_now() - c0;
-      fprintf(f, "%s,%d,%d,%s,%d,%d,%.6f,%.6f,%.2f,%.4f\n",
+      lido = lido && rapl_ler(&e1);
+      char en[32];
+      if (lido) snprintf(en, sizeof en, "%.6f", rapl_delta_j(e0, e1)); else snprintf(en, sizeof en, "nan");
+      fprintf(f, "%s,%d,%d,%s,%d,%d,%.6f,%.6f,%.2f,%.4f,%s\n",
               v == 0 ? "ijk" : "ikj", n, threads, sched, chunk, r, w, c,
-              flops / w / 1e6, c / w / threads);
+              flops / w / 1e6, c / w / threads, en);
     }
   }
   fclose(f);

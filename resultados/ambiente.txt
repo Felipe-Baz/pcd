@@ -1,6 +1,11 @@
-SO: Windows-11-10.0.26200-SP0
-Python: 3.13.14
-Compilador: gcc (Rev8, Built by MSYS2 project) 15.2.0
+SO: Linux-7.0.0-38-generic-x86_64-with-glibc2.39
+Python: 3.12.3
+Compilador: gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
 Flags: -O3 -Wall -fopenmp
-Processador: AMD64 Family 25 Model 33 Stepping 0, AuthenticAMD
-CPU: AMD Ryzen 5 5600X, 6 nucleos / 12 threads, 4.2 GHz (base), 32 GB RAM
+CPU: x86_64
+Nucleos fisicos / logicos: 2 / 4
+Memoria: 7.5 GiB
+Governor de frequencia: powersave
+Fonte AC conectada (1=sim): 1
+Energia: RAPL pacote em /sys/class/powercap/intel-rapl:0
+Protocolo: 3 rodadas x 5 reps; ocioso 10s por grupo; pausa 2s
